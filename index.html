@@ -21,6 +21,7 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 #cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .start {
@@ -191,10 +192,10 @@ body {
 
   <div class="fallback" id="fallback" hidden>This prototype needs WebGL. Try opening it in Safari or Chrome.</div>
 
-  <div class="start" id="start">
+  <div class="start" id="start" hidden>
     <div class="start-card">
       <h1>Vase Styling AR</h1>
-      <p>Point your phone down at a table, about an arm’s length away. Allow camera and motion access when asked.</p>
+      <p id="startMsg">The camera didn’t start. Tap Start camera and allow access, or try the sample room.</p>
       <button class="btn primary" id="startCam">Start camera</button>
       <button class="btn" id="startSample">Try the sample room</button>
     </div>
@@ -569,7 +570,7 @@ body {
   function refresh() {
     renderList();
     document.getElementById('clearBtn').disabled = !(arr || ghost);
-    if (state.phase === 'wait') setHint('Tap Start camera to begin', 'ok');
+    if (state.phase === 'wait') setHint('Starting camera… allow access when asked', 'scan');
     else if (state.phase === 'ghost' && state.live) setHint(lastValid ? 'Aim at the table, then tap to place' : 'Aim lower, at the table', lastValid ? 'ok' : 'warn');
     else if (state.phase === 'scan') setHint('Looking for a surface… move your phone slowly', 'scan');
     else if (state.phase === 'idle') setHint('Surface found. Pick a vase or flowers from the panel', 'ok');
@@ -760,15 +761,25 @@ body {
     startEl.hidden = true; refresh();
   }
   document.getElementById('startSample').addEventListener('click', beginScan);
-  document.getElementById('startCam').addEventListener('click', async () => {
-    // motion permission must be asked inside the tap on iPhone
+
+  // iPhone only allows motion access from a tap, so ask on the first touch anywhere
+  let motionAsked = false;
+  async function askMotion() {
+    if (motionAsked) return; motionAsked = true;
     try {
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         const r = await DeviceOrientationEvent.requestPermission();
         if (r !== 'granted') toast('Motion access was declined, so the vase won’t stay put when you turn');
       }
-    } catch (err) {}
-    window.addEventListener('deviceorientation', onOrient);
+    } catch (err) { motionAsked = false; }
+  }
+  window.addEventListener('deviceorientation', onOrient);
+  document.addEventListener('pointerdown', askMotion, { capture: true });
+
+  document.getElementById('startCam').addEventListener('click', () => { askMotion(); startCamera(true); });
+  startCamera(false);
+
+  async function startCamera(fromTap) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
       video.srcObject = stream; video.hidden = false;
@@ -779,11 +790,14 @@ body {
       camera.rotation.set(-0.8, 0, 0);
       resize();
       beginScan();
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function' && !motionAsked) {
+        toast('Tap the screen once to turn on motion tracking');
+      }
     } catch (err) {
-      toast('Camera unavailable here. Showing the sample room');
-      beginScan();
+      if (fromTap) { toast('Camera unavailable here. Showing the sample room'); beginScan(); }
+      else { startEl.hidden = false; }
     }
-  });
+  }
 
   window.addEventListener('resize', resize);
   resize();
