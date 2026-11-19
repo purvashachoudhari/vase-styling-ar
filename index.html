@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vase Styling AR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a full-screen camera view; the 3D scene fills it, a white picker panel docks right, a hint chip sits top-left, actions sit along the bottom. */
+:root {
+  --ground: #e6e2dc;
+  --panel: rgba(255, 255, 255, 0.94);
+  --ink: #23201d;
+  --muted: #6b645c;
+  --line: #ddd6cc;
+  --accent: #6e2a45;
+  --ok: #2f6b4f;
+  --warn: #a4471f;
+  --font-ui: "Figtree", "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+#cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.start {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: rgba(35,32,29,0.55);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.start-card {
+  background: var(--panel); border-radius: 20px; padding: 22px; max-width: 340px;
+  display: flex; flex-direction: column; gap: 12px; text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+}
+.start-card h1 { margin: 0; font-size: 22px; }
+.start-card p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); }
+.start-card .btn { justify-content: center; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+#app { position: fixed; inset: 0; }
+#bg {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+}
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+
+.hint {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  max-width: min(62vw, 340px);
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(35, 32, 29, 0.78);
+  color: #fbf8f4;
+  font-size: 14px; font-weight: 500; line-height: 1.3;
+  padding: 9px 13px; border-radius: 999px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.hint .dot { width: 8px; height: 8px; border-radius: 50%; background: #fbf8f4; flex: none; }
+.hint[data-tone="ok"] .dot { background: #7fd1a3; }
+.hint[data-tone="warn"] .dot { background: #ffb27a; }
+.hint[data-tone="scan"] .dot { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+
+/* Picker panel, after the Figma frames: arrow tab on top, thumbnails with colour dots below */
+.panel {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+}
+.tab {
+  width: 40px; height: 40px; border-radius: 12px; border: 0;
+  background: var(--panel); color: var(--ink);
+  font: 600 20px/1 var(--font-ui);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.14);
+  cursor: pointer;
+}
+.list {
+  background: var(--panel);
+  border-radius: 16px;
+  padding: 8px;
+  display: flex; flex-direction: column; gap: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+  transform-origin: top right;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.panel[data-open="false"] .list { opacity: 0; transform: scale(0.92); pointer-events: none; }
+.item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 6px; border-radius: 12px;
+  border: 2px solid transparent;
+}
+.item[data-active="true"] { border-color: var(--accent); background: #f6eef1; }
+.thumb {
+  width: 72px; height: 72px; border-radius: 10px; border: 0; padding: 0;
+  background: #f1ede7 center / cover no-repeat;
+  cursor: pointer;
+}
+.thumb:disabled { cursor: default; opacity: 0.5; }
+.swatches { display: flex; gap: 6px; }
+.sw {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.25); padding: 0; cursor: pointer;
+}
+.sw[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 2px; }
+.label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+
+.bar {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+  pointer-events: none;
+}
+.btn {
+  pointer-events: auto;
+  border: 0; border-radius: 999px;
+  background: var(--panel); color: var(--ink);
+  font: 600 14px/1 var(--font-ui);
+  padding: 12px 16px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.14);
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn.primary { background: var(--accent); color: #fff; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.tab:focus-visible, .btn:focus-visible, .thumb:focus-visible, .sw:focus-visible, label.btn:focus-within {
+  outline: 3px solid #5b8def; outline-offset: 2px;
+}
+#photo { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+.toast {
+  position: absolute; left: 50%;
+  bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  background: rgba(35,32,29,0.85); color: #fbf8f4;
+  font-size: 13px; font-weight: 500;
+  padding: 8px 12px; border-radius: 10px;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+.toast[data-show="false"] { opacity: 0; }
+
+.fallback {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  text-align: center; color: var(--ink); font-size: 15px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .list { transition: none; }
+  .hint[data-tone="scan"] .dot { animation: none; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bg"></div>
+  <video id="cam" playsinline muted autoplay hidden></video>
+  <canvas id="scene" aria-label="AR view of a table where you can place a vase and flowers"></canvas>
+
+  <div class="hint" id="hint" data-tone="scan" role="status" aria-live="polite">
+    <span class="dot"></span><span id="hintText">Looking for a surface… move your phone slowly</span>
+  </div>
+
+  <div class="panel" id="panel" data-open="false">
+    <button class="tab" id="tab" aria-expanded="false" aria-controls="list" aria-label="Open picker">←</button>
+    <div class="list" id="list"></div>
+  </div>
+
+  <div class="toast" id="toast" data-show="false"></div>
+
+  <div class="bar">
+    <label class="btn" for="photo" id="photoBtn">Use a photo of my table
+      <input type="file" id="photo" accept="image/*" capture="environment">
+    </label>
+    <button class="btn" id="sampleBtn" hidden>Sample room</button>
+    <button class="btn" id="clearBtn" disabled>Clear</button>
+  </div>
+
+  <div class="fallback" id="fallback" hidden>This prototype needs WebGL. Try opening it in Safari or Chrome.</div>
+
+  <div class="start" id="start">
+    <div class="start-card">
+      <h1>Vase Styling AR</h1>
+      <p>Point your phone down at a table, about an arm’s length away. Allow camera and motion access when asked.</p>
+      <button class="btn primary" id="startCam">Start camera</button>
+      <button class="btn" id="startSample">Try the sample room</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  if (!window.THREE) { document.getElementById('fallback').hidden = false; return; }
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- catalogue ----------
+  const ITEMS = [
+    { id: 'vaseA', kind: 'vase', name: 'Ceramic vase', colors: ['#eee8de', '#d8c2a3', '#b56a4c'] },
+    { id: 'flowers', kind: 'flowers', name: 'Calla lilies', colors: ['#4a0f2a', '#f2eee4', '#e49ab0'] },
+    { id: 'vaseB', kind: 'vase', name: 'Amphora vase', colors: ['#d8c2a3', '#eee8de', '#7c8a78'] },
+  ];
+  const colorIdx = { vaseA: 0, flowers: 0, vaseB: 0 };
+  const colorOf = id => ITEMS.find(i => i.id === id).colors[colorIdx[id]];
+
+  // ---------- renderer ----------
+  const canvas = document.getElementById('scene');
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  } catch (e) { document.getElementById('fallback').hidden = false; return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(48, 1, 0.01, 20);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xb7a68e, 0.75));
+  const sun = new THREE.DirectionalLight(0xfff4e6, 1.0);
+  sun.position.set(0.7, 1.5, 0.9);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.left = -0.9; sun.shadow.camera.right = 0.9;
+  sun.shadow.camera.top = 0.9; sun.shadow.camera.bottom = -0.9;
+  sun.shadow.camera.near = 0.1; sun.shadow.camera.far = 4;
+  sun.shadow.radius = 4;
+  sun.shadow.bias = -0.0006;
+  scene.add(sun);
+
+  // ---------- textures ----------
+  function canvasTex(w, h, draw) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    draw(c.getContext('2d'), w, h);
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+  }
+  const grainTex = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 2600; i++) {
+      const a = Math.random() * 0.12;
+      g.fillStyle = `rgba(80,60,40,${a})`;
+      g.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 1.5, 1 + Math.random() * 1.5);
+    }
+  });
+  grainTex.wrapS = grainTex.wrapT = THREE.RepeatWrapping; grainTex.repeat.set(2, 2);
+
+  const blindsTex = canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = '#e4e0da'; g.fillRect(0, 0, w, h);
+    for (let x = 0; x < w; x += 22) {
+      const gr = g.createLinearGradient(x, 0, x + 22, 0);
+      gr.addColorStop(0, '#d6d1ca'); gr.addColorStop(0.5, '#f0ede8'); gr.addColorStop(1, '#d9d4cd');
+      g.fillStyle = gr; g.fillRect(x, 0, 22, h);
+    }
+  });
+  blindsTex.wrapS = THREE.RepeatWrapping; blindsTex.repeat.set(3, 1);
+
+  const woodTex = canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = '#8b6a47'; g.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 64) {
+      g.fillStyle = y % 128 ? '#94724e' : '#80613f'; g.fillRect(0, y, w, 62);
+      g.fillStyle = 'rgba(40,25,10,0.35)'; g.fillRect(0, y + 62, w, 2);
+      for (let i = 0; i < 14; i++) {
+        g.strokeStyle = 'rgba(60,40,20,0.15)'; g.beginPath();
+        const yy = y + Math.random() * 60; g.moveTo(0, yy);
+        g.bezierCurveTo(w * 0.3, yy + 4, w * 0.6, yy - 4, w, yy + 2); g.stroke();
+      }
+    }
+  });
+  woodTex.wrapS = woodTex.wrapT = THREE.RepeatWrapping; woodTex.repeat.set(3, 3);
+
+  const dotsTex = canvasTex(256, 256, (g, w, h) => {
+    g.clearRect(0, 0, w, h); g.fillStyle = '#ffffff';
+    for (let x = 8; x < w; x += 16) for (let y = 8; y < h; y += 16) { g.beginPath(); g.arc(x, y, 2.2, 0, Math.PI * 2); g.fill(); }
+  });
+  dotsTex.wrapS = dotsTex.wrapT = THREE.RepeatWrapping; dotsTex.repeat.set(6, 4);
+
+  function outlineTex(stroke) {
+    return canvasTex(256, 256, (g, w, h) => {
+      g.clearRect(0, 0, w, h); g.strokeStyle = stroke; g.lineWidth = 6;
+      g.strokeRect(12, 12, w - 24, h - 24);
+      g.lineWidth = 3; g.globalAlpha = 0.7; g.beginPath();
+      g.moveTo(12, 12); g.lineTo(w - 12, h - 12); g.moveTo(w - 12, 12); g.lineTo(12, h - 12); g.stroke();
+    });
+  }
+  const reticleOk = outlineTex('#ffffff');
+  const reticleBad = outlineTex('#ff9a5c');
+
+  // ---------- sample room ----------
+  const room = new THREE.Group(); scene.add(room);
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(5, 3), new THREE.MeshStandardMaterial({ map: blindsTex, roughness: 0.95 }));
+  wall.position.set(0, 0.45, -0.95); room.add(wall);
+  const sill = new THREE.Mesh(new THREE.BoxGeometry(5, 0.05, 0.06), new THREE.MeshStandardMaterial({ color: 0xf2efe9, roughness: 0.8 }));
+  sill.position.set(0, -0.12, -0.93); room.add(sill);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.75 }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -0.74; floor.receiveShadow = true; room.add(floor);
+  const TABLE = { w: 1.3, d: 0.72 };
+  const top = new THREE.Mesh(new THREE.BoxGeometry(TABLE.w, 0.024, TABLE.d),
+    new THREE.MeshStandardMaterial({ color: 0xcdb08a, map: woodTex, roughness: 0.55 }));
+  top.position.y = -0.012; top.receiveShadow = true; top.castShadow = true; room.add(top);
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x1f1d1b, roughness: 0.6 });
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.72, 0.03), legMat);
+    leg.position.set(sx * (TABLE.w / 2 - 0.05), -0.38, sz * (TABLE.d / 2 - 0.05)); leg.castShadow = true; room.add(leg);
+  });
+
+  // shadow catcher for photo mode
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.ShadowMaterial({ opacity: 0.3 }));
+  catcher.rotation.x = -Math.PI / 2; catcher.position.y = 0.0005; catcher.receiveShadow = true; catcher.visible = false;
+  scene.add(catcher);
+
+  // detected-surface dots
+  const planeDots = new THREE.Mesh(new THREE.PlaneGeometry(TABLE.w - 0.04, TABLE.d - 0.04),
+    new THREE.MeshBasicMaterial({ map: dotsTex, transparent: true, opacity: 0, depthWrite: false }));
+  planeDots.rotation.x = -Math.PI / 2; planeDots.position.y = 0.002; scene.add(planeDots);
+
+  // placement outline
+  const reticle = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.24),
+    new THREE.MeshBasicMaterial({ map: reticleOk, transparent: true, depthWrite: false }));
+  reticle.rotation.x = -Math.PI / 2; reticle.position.y = 0.003; reticle.visible = false; scene.add(reticle);
+
+  // ---------- models ----------
+  function stdMat(color, ghost) {
+    const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.82, metalness: 0, map: grainTex, side: THREE.DoubleSide });
+    if (ghost) { m.transparent = true; m.opacity = 0.42; m.depthWrite = false; }
+    return m;
+  }
+  const V = (x, y) => new THREE.Vector2(x, y);
+  function buildVase(id, color, ghost) {
+    const g = new THREE.Group();
+    let pts;
+    if (id === 'vaseA') {
+      pts = [V(0, 0), V(0.05, 0), V(0.07, 0.02), V(0.088, 0.08), V(0.088, 0.14), V(0.068, 0.2), V(0.04, 0.245), V(0.032, 0.268), V(0.038, 0.285), V(0.034, 0.29)];
+      g.userData.anchorY = 0.27;
+    } else {
+      pts = [V(0, 0), V(0.046, 0), V(0.05, 0.012), V(0.04, 0.024), V(0.072, 0.07), V(0.094, 0.13), V(0.086, 0.188), V(0.056, 0.228), V(0.038, 0.25), V(0.036, 0.27), V(0.046, 0.286), V(0.041, 0.292)];
+      g.userData.anchorY = 0.272;
+    }
+    const body = new THREE.Mesh(new THREE.LatheGeometry(pts, 56), stdMat(color, ghost));
+    g.add(body);
+    if (id === 'vaseB') {
+      [1, -1].forEach(s => {
+        const h = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.0075, 10, 24, Math.PI), stdMat(color, ghost));
+        h.position.set(s * 0.058, 0.218, 0); h.rotation.z = -s * Math.PI / 2; g.add(h);
+      });
+    }
+    return g;
+  }
+  function rng(seed) { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+  function buildFlowers(color, ghost) {
+    const g = new THREE.Group();
+    const r = rng(7);
+    const stemMat = ghost ? stdMat('#55703f', true) : new THREE.MeshStandardMaterial({ color: 0x55703f, roughness: 0.7 });
+    const bloomMat = stdMat(color, ghost); bloomMat.roughness = 0.6; bloomMat.map = null;
+    const spadixMat = ghost ? stdMat('#e8c24a', true) : new THREE.MeshStandardMaterial({ color: 0xe8c24a, roughness: 0.6 });
+    const up = new THREE.Vector3(0, 1, 0);
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + r() * 0.5;
+      const spread = 0.04 + r() * 0.07;
+      const h = 0.3 + r() * 0.12;
+      const end = new THREE.Vector3(Math.cos(a) * spread, h, Math.sin(a) * spread * 0.8);
+      const mid = new THREE.Vector3(end.x * 0.35, h * 0.55, end.z * 0.35);
+      const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(0, 0, 0), mid, end);
+      g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 18, 0.0035, 6), stemMat));
+      const tan = curve.getTangent(1).normalize();
+      const bloom = new THREE.Group();
+      const spathe = new THREE.Mesh(new THREE.LatheGeometry([V(0.002, 0), V(0.008, 0.012), V(0.016, 0.03), V(0.024, 0.052), V(0.03, 0.066)], 24, 0.4, Math.PI * 1.65), bloomMat);
+      bloom.add(spathe);
+      const spadix = new THREE.Mesh(new THREE.CylinderGeometry(0.0028, 0.0035, 0.04, 8), spadixMat);
+      spadix.position.y = 0.022; bloom.add(spadix);
+      bloom.position.copy(end);
+      const dir = tan.clone().add(new THREE.Vector3(end.x, 0, end.z).multiplyScalar(4)).normalize();
+      bloom.quaternion.setFromUnitVectors(up, dir);
+      g.add(bloom);
+    }
+    return g;
+  }
+  function shadowify(obj, on) { obj.traverse(o => { if (o.isMesh) { o.castShadow = on; o.receiveShadow = false; } }); }
+
+  // ---------- thumbnails ----------
+  function makeThumbs() {
+    const tr = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    tr.setSize(192, 192); tr.outputEncoding = THREE.sRGBEncoding; tr.toneMapping = THREE.ACESFilmicToneMapping;
+    const ts = new THREE.Scene();
+    ts.add(new THREE.HemisphereLight(0xffffff, 0xb7a68e, 0.9));
+    const d = new THREE.DirectionalLight(0xffffff, 0.9); d.position.set(0.6, 1, 1); ts.add(d);
+    const tc = new THREE.PerspectiveCamera(30, 1, 0.01, 10);
+    const urls = {};
+    ITEMS.forEach(it => {
+      const m = it.kind === 'vase' ? buildVase(it.id, colorOf(it.id), false) : buildFlowers(colorOf(it.id), false);
+      if (it.kind === 'flowers') m.position.y = -0.05;
+      ts.add(m);
+      tc.position.set(0, 0.2, 0.72); tc.lookAt(0, it.kind === 'vase' ? 0.14 : 0.2, 0);
+      tr.setClearColor(0xf1ede7, 1);
+      tr.render(ts, tc);
+      urls[it.id] = tr.domElement.toDataURL('image/png');
+      ts.remove(m);
+    });
+    tr.dispose();
+    return urls;
+  }
+
+  // ---------- state ----------
+  const state = {
+    phase: 'wait',            // wait | scan | idle | ghost | placed
+    pending: null,            // item id while previewing
+    vase: null, flowers: false,
+    photo: false,
+    live: false,
+  };
+  let t0 = performance.now();
+  let arr = null;   // { root, vase, flowers }
+  let ghost = null;
+  const anims = [];
+
+  function anchorYFor(vaseGroup) { return vaseGroup ? vaseGroup.userData.anchorY - 0.07 : 0; }
+
+  function buildGhost(id) {
+    if (ghost) scene.remove(ghost);
+    ghost = new THREE.Group();
+    const it = ITEMS.find(i => i.id === id);
+    if (it.kind === 'vase') ghost.add(buildVase(id, colorOf(id), true));
+    else ghost.add(buildFlowers(colorOf(id), true));
+    ghost.position.set(0, 0, 0.05);
+    scene.add(ghost);
+  }
+
+  function drop(obj, targetY, height) {
+    if (reduceMotion) { obj.position.y = targetY; return; }
+    anims.push({ obj, from: targetY + (height || 0.25), to: targetY, t0: performance.now(), dur: 520 });
+    obj.position.y = targetY + (height || 0.25);
+  }
+
+  function placeAt(p) {
+    const id = state.pending;
+    const it = ITEMS.find(i => i.id === id);
+    arr = { root: new THREE.Group(), vase: null, flowers: null };
+    arr.root.position.set(p.x, 0, p.z);
+    arr.root.rotation.y = ghost ? ghost.rotation.y : 0;
+    scene.add(arr.root);
+    if (it.kind === 'vase') { setVase(id, true); } else { setFlowers(true, true); }
+    if (ghost) { scene.remove(ghost); ghost = null; }
+    state.pending = null;
+    state.phase = 'placed';
+    toast(it.name + ' placed');
+    refresh();
+  }
+
+  function setVase(id, animate) {
+    if (arr.vase) arr.root.remove(arr.vase);
+    arr.vase = buildVase(id, colorOf(id), false); shadowify(arr.vase, true);
+    arr.root.add(arr.vase);
+    state.vase = id;
+    if (animate) drop(arr.vase, 0);
+    if (arr.flowers) { arr.flowers.position.y = anchorYFor(arr.vase); }
+  }
+  function setFlowers(on, animate) {
+    if (arr.flowers) { arr.root.remove(arr.flowers); arr.flowers = null; }
+    state.flowers = on;
+    if (!on) return;
+    arr.flowers = buildFlowers(colorOf('flowers'), false); shadowify(arr.flowers, true);
+    arr.root.add(arr.flowers);
+    const y = anchorYFor(arr.vase);
+    if (animate) drop(arr.flowers, y, 0.3); else arr.flowers.position.y = y;
+  }
+
+  function clearAll() {
+    if (arr) scene.remove(arr.root);
+    if (ghost) scene.remove(ghost);
+    arr = null; ghost = null;
+    state.vase = null; state.flowers = false; state.pending = null;
+    state.phase = 'idle';
+    refresh();
+  }
+
+  // ---------- picker UI ----------
+  const panel = document.getElementById('panel');
+  const tab = document.getElementById('tab');
+  const list = document.getElementById('list');
+  let thumbs = {};
+  try { thumbs = makeThumbs(); } catch (e) { thumbs = {}; }
+
+  function setOpen(open) {
+    panel.dataset.open = String(open);
+    tab.textContent = open ? '→' : '←';
+    tab.setAttribute('aria-expanded', String(open));
+    tab.setAttribute('aria-label', open ? 'Close picker' : 'Open picker');
+  }
+  tab.addEventListener('click', () => setOpen(panel.dataset.open !== 'true'));
+
+  function renderList() {
+    list.innerHTML = '';
+    ITEMS.forEach(it => {
+      const wrap = document.createElement('div'); wrap.className = 'item';
+      const active = (it.kind === 'vase' && state.vase === it.id) || (it.kind === 'flowers' && state.flowers) || state.pending === it.id;
+      wrap.dataset.active = String(!!active);
+      const b = document.createElement('button');
+      b.className = 'thumb'; b.id = 'thumb-' + it.id;
+      b.style.backgroundImage = thumbs[it.id] ? `url(${thumbs[it.id]})` : 'none';
+      b.setAttribute('aria-label', it.name);
+      b.disabled = state.phase === 'scan';
+      b.addEventListener('click', () => pick(it.id));
+      const lab = document.createElement('span'); lab.className = 'label'; lab.textContent = it.name;
+      const sw = document.createElement('div'); sw.className = 'swatches';
+      it.colors.forEach((c, i) => {
+        const s = document.createElement('button');
+        s.className = 'sw'; s.id = `sw-${it.id}-${i}`; s.style.background = c;
+        s.setAttribute('aria-label', `${it.name} colour ${i + 1}`);
+        s.setAttribute('aria-pressed', String(colorIdx[it.id] === i));
+        s.addEventListener('click', () => recolor(it.id, i));
+        sw.appendChild(s);
+      });
+      wrap.append(b, lab, sw);
+      list.appendChild(wrap);
+    });
+  }
+
+  function pick(id) {
+    const it = ITEMS.find(i => i.id === id);
+    if (state.phase === 'placed' && arr) {
+      if (it.kind === 'vase') {
+        if (state.vase === id) { toast('Already showing this vase'); return; }
+        const had = !!state.vase;
+        setVase(id, true);
+        toast(had ? 'Vase swapped, flowers kept' : 'Vase added under the flowers');
+      } else {
+        setFlowers(!state.flowers, true);
+        toast(state.flowers ? 'Calla lilies added' : 'Calla lilies removed');
+        if (!state.vase && !state.flowers) { clearAll(); return; }
+      }
+      refresh(); return;
+    }
+    state.pending = id; state.phase = 'ghost';
+    buildGhost(id);
+    refresh();
+  }
+
+  function recolor(id, i) {
+    colorIdx[id] = i;
+    try { thumbs = makeThumbs(); } catch (e) {}
+    if (arr) {
+      if (id === state.vase) setVase(id, false);
+      if (id === 'flowers' && state.flowers) setFlowers(true, false);
+    }
+    if (ghost && state.pending === id) { const p = ghost.position.clone(); buildGhost(id); ghost.position.copy(p); }
+    refresh();
+  }
+
+  // ---------- hint / toast ----------
+  const hint = document.getElementById('hint');
+  const hintText = document.getElementById('hintText');
+  let lastValid = true;
+  function setHint(text, tone) { if (hintText.textContent !== text) hintText.textContent = text; hint.dataset.tone = tone; }
+  function refresh() {
+    renderList();
+    document.getElementById('clearBtn').disabled = !(arr || ghost);
+    if (state.phase === 'wait') setHint('Tap Start camera to begin', 'ok');
+    else if (state.phase === 'ghost' && state.live) setHint(lastValid ? 'Aim at the table, then tap to place' : 'Aim lower, at the table', lastValid ? 'ok' : 'warn');
+    else if (state.phase === 'scan') setHint('Looking for a surface… move your phone slowly', 'scan');
+    else if (state.phase === 'idle') setHint('Surface found. Pick a vase or flowers from the panel', 'ok');
+    else if (state.phase === 'ghost') setHint(lastValid ? 'Tap the table to place it here' : 'Point at the table to place it', lastValid ? 'ok' : 'warn');
+    else setHint('Drag to move · pinch to resize · twist to rotate', 'ok');
+  }
+  const toastEl = document.getElementById('toast');
+  let toastTimer;
+  function toast(msg) {
+    toastEl.textContent = msg; toastEl.dataset.show = 'true';
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (toastEl.dataset.show = 'false'), 1600);
+  }
+
+  // ---------- photo mode ----------
+  const bg = document.getElementById('bg');
+  const sampleBtn = document.getElementById('sampleBtn');
+  let photoUrl = null;
+  document.getElementById('photo').addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+    photoUrl = URL.createObjectURL(f);
+    bg.style.backgroundImage = `url(${photoUrl})`;
+    state.photo = true; room.visible = false; catcher.visible = true;
+    sampleBtn.hidden = false;
+    planeDots.scale.set(1.3, 1.3, 1);
+    flashDots();
+    toast('Photo loaded. Tap where the table is');
+    e.target.value = '';
+  });
+  sampleBtn.addEventListener('click', () => {
+    bg.style.backgroundImage = ''; state.photo = false; room.visible = true; catcher.visible = false;
+    sampleBtn.hidden = true; planeDots.scale.set(1, 1, 1);
+  });
+  document.getElementById('clearBtn').addEventListener('click', () => { clearAll(); toast('Cleared'); });
+
+  // ---------- surface helpers ----------
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const ray = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  function hitAt(cx, cy) {
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const p = new THREE.Vector3();
+    return ray.ray.intersectPlane(ground, p) ? p : null;
+  }
+  function onSurface(p) {
+    if (!p) return false;
+    if (state.live) return p.distanceTo(camera.position) < 2.2;
+    if (state.photo) return Math.hypot(p.x, p.z) < 1.1;
+    return Math.abs(p.x) < TABLE.w / 2 - 0.08 && Math.abs(p.z) < TABLE.d / 2 - 0.08;
+  }
+  function clampToSurface(p) {
+    if (state.live) return p;
+    if (state.photo) { const d = Math.hypot(p.x, p.z); if (d > 1.1) p.multiplyScalar(1.1 / d); return p; }
+    p.x = Math.max(-(TABLE.w / 2 - 0.08), Math.min(TABLE.w / 2 - 0.08, p.x));
+    p.z = Math.max(-(TABLE.d / 2 - 0.08), Math.min(TABLE.d / 2 - 0.08, p.z));
+    return p;
+  }
+
+  let dotsUntil = 0;
+  function flashDots() { dotsUntil = performance.now() + 1800; }
+
+  // ---------- gestures ----------
+  const pts = new Map();
+  let drag = null, pinch = null, downInfo = null;
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) {
+      downInfo = { x: e.clientX, y: e.clientY, t: performance.now(), shift: e.shiftKey || e.button === 2 };
+      if (state.phase === 'placed' && arr) {
+        const p = hitAt(e.clientX, e.clientY);
+        if (p) drag = { off: arr.root.position.clone().sub(p), rotStart: arr.root.rotation.y, x0: e.clientX, rotate: downInfo.shift };
+      }
+      if (state.phase === 'ghost' && !state.live) moveGhost(e.clientX, e.clientY);
+    } else if (pts.size === 2 && state.phase === 'placed' && arr) {
+      drag = null;
+      const [a, b] = [...pts.values()];
+      pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y), a0: Math.atan2(b.y - a.y, b.x - a.x), s0: arr.root.scale.x, r0: arr.root.rotation.y };
+    }
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (state.phase === 'ghost') { if (!state.live) moveGhost(e.clientX, e.clientY); return; }
+    if (state.phase !== 'placed' || !arr) return;
+    if (pinch && pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
+      const s = Math.max(0.5, Math.min(2, pinch.s0 * d / pinch.d0));
+      arr.root.scale.setScalar(s);
+      arr.root.rotation.y = pinch.r0 - (ang - pinch.a0);
+    } else if (drag && pts.size === 1) {
+      if (drag.rotate) { arr.root.rotation.y = drag.rotStart + (e.clientX - drag.x0) * 0.012; return; }
+      const p = hitAt(e.clientX, e.clientY);
+      if (p) { const n = clampToSurface(p.add(drag.off)); arr.root.position.set(n.x, 0, n.z); }
+    }
+  });
+  function endPointer(e) {
+    const info = downInfo;
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (pts.size === 0) {
+      drag = null;
+      if (state.phase === 'ghost' && info && state.live) {
+        if (ghost && ghost.visible) placeAt(ghost.position.clone());
+        else toast('Point at the table first');
+      } else if (state.phase === 'ghost' && info) {
+        const moved = Math.hypot(e.clientX - info.x, e.clientY - info.y);
+        const p = hitAt(e.clientX, e.clientY);
+        if (moved < 12 || e.pointerType !== 'mouse') {
+          if (onSurface(p)) placeAt(p);
+          else toast('That spot isn’t on the table');
+        }
+      }
+      downInfo = null;
+    }
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', e => { pts.delete(e.pointerId); pinch = null; drag = null; });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('wheel', e => {
+    if (state.phase !== 'placed' || !arr) return;
+    e.preventDefault();
+    const s = Math.max(0.5, Math.min(2, arr.root.scale.x * Math.exp(-e.deltaY * 0.0015)));
+    arr.root.scale.setScalar(s);
+  }, { passive: false });
+  window.addEventListener('keydown', e => {
+    if (!arr) return;
+    if (e.key === 'q' || e.key === 'Q') arr.root.rotation.y += 0.15;
+    if (e.key === 'e' || e.key === 'E') arr.root.rotation.y -= 0.15;
+  });
+
+  function moveGhost(cx, cy) {
+    if (!ghost) return;
+    const p = hitAt(cx, cy);
+    const valid = onSurface(p);
+    if (p) { ghost.position.set(p.x, 0, p.z); reticle.position.set(p.x, 0.003, p.z); }
+    reticle.material.map = valid ? reticleOk : reticleBad; reticle.material.needsUpdate = true;
+    ghost.visible = valid;
+    if (valid !== lastValid) { lastValid = valid; refresh(); }
+  }
+
+  // ---------- layout ----------
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    if (state.live) {
+      camera.fov = camera.aspect < 0.8 ? 64 : 46;
+      camera.position.set(0, CAM_HEIGHT, 0);
+      camera.updateProjectionMatrix();
+      return;
+    }
+    const portrait = camera.aspect < 0.8;
+    camera.fov = portrait ? 52 : 44;
+    camera.position.set(0, portrait ? 0.46 : 0.42, portrait ? 0.98 : 0.86);
+    camera.lookAt(0, 0.08, 0);
+    camera.updateProjectionMatrix();
+  }
+  // ---------- live camera + phone motion ----------
+  const CAM_HEIGHT = 0.42;               // assumed phone height above the table, in metres
+  const video = document.getElementById('cam');
+  const startEl = document.getElementById('start');
+  const orient = { alpha: null, beta: 0, gamma: 0, a0: null };
+  const zee = new THREE.Vector3(0, 0, 1);
+  const euler = new THREE.Euler();
+  const q0 = new THREE.Quaternion();
+  const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+  const screenAngle = () => ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * Math.PI / 180;
+  function onOrient(e) {
+    if (e.alpha == null) return;
+    if (orient.a0 == null) orient.a0 = e.alpha;
+    orient.alpha = e.alpha; orient.beta = e.beta; orient.gamma = e.gamma;
+  }
+  function applyOrient() {
+    if (orient.alpha == null) return;
+    const D = Math.PI / 180;
+    euler.set(orient.beta * D, (orient.alpha - orient.a0) * D, -orient.gamma * D, 'YXZ');
+    camera.quaternion.setFromEuler(euler);
+    camera.quaternion.multiply(q1);
+    camera.quaternion.multiply(q0.setFromAxisAngle(zee, -screenAngle()));
+  }
+
+  function beginScan() {
+    state.phase = 'scan'; t0 = performance.now();
+    startEl.hidden = true; refresh();
+  }
+  document.getElementById('startSample').addEventListener('click', beginScan);
+  document.getElementById('startCam').addEventListener('click', async () => {
+    // motion permission must be asked inside the tap on iPhone
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const r = await DeviceOrientationEvent.requestPermission();
+        if (r !== 'granted') toast('Motion access was declined, so the vase won’t stay put when you turn');
+      }
+    } catch (err) {}
+    window.addEventListener('deviceorientation', onOrient);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      video.srcObject = stream; video.hidden = false;
+      await video.play().catch(() => {});
+      state.live = true; room.visible = false; catcher.visible = true;
+      planeDots.scale.set(1.2, 1.6, 1);
+      camera.position.set(0, CAM_HEIGHT, 0);
+      camera.rotation.set(-0.8, 0, 0);
+      resize();
+      beginScan();
+    } catch (err) {
+      toast('Camera unavailable here. Showing the sample room');
+      beginScan();
+    }
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- loop ----------
+  const centre = () => { const r = canvas.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height * 0.58]; };
+  function frame(now) {
+    if (state.live) {
+      applyOrient();
+      const [cx, cy] = centre();
+      const p = hitAt(cx, cy);
+      if (p && onSurface(p)) planeDots.position.set(p.x, 0.002, p.z);
+      if (state.phase === 'ghost') moveGhost(cx, cy);
+    }
+    // scanning intro: surface dots appear, then panel opens
+    if (state.phase === 'scan' && now - t0 > (reduceMotion ? 300 : 1900)) {
+      state.phase = 'idle'; flashDots(); setOpen(true); refresh();
+    }
+    const showDots = state.phase === 'scan' ? Math.min(1, (now - t0) / 1600) * 0.5
+      : (state.phase === 'ghost' || now < dotsUntil) ? 0.45 : 0;
+    planeDots.material.opacity += (showDots - planeDots.material.opacity) * 0.12;
+
+    reticle.visible = state.phase === 'ghost' && !!ghost;
+    if (ghost && !reduceMotion) ghost.children[0].position.y = 0.02 + Math.sin(now / 300) * 0.008;
+
+    for (let i = anims.length - 1; i >= 0; i--) {
+      const a = anims[i];
+      let k = Math.min(1, (now - a.t0) / a.dur);
+      const ease = k < 1 ? 1 - Math.pow(1 - k, 3) : 1;
+      const bounce = k < 1 ? Math.sin(k * Math.PI) * 0.012 * (1 - k) : 0;
+      a.obj.position.y = a.from + (a.to - a.from) * ease + bounce;
+      if (k >= 1) { a.obj.position.y = a.to; anims.splice(i, 1); }
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  refresh();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
